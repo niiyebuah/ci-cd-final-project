@@ -2,10 +2,30 @@
 apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
+  name: git-clone
+spec:
+  params:
+    - name: repo
+      type: string
+      description: The Git repository URL to clone
+  workspaces:
+    - name: output
+  steps:
+    - name: clone
+      image: alpine/git
+      script: |
+        #!/bin/sh
+        set -e
+        git clone $(params.repo) $(workspaces.output.path)
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
   name: nose
 spec:
   workspaces:
-    - name: source
+    - name: source  # Ensure the workspace is defined here
   params:
     - name: args
       description: Arguments to pass to nose
@@ -14,10 +34,88 @@ spec:
   steps:
     - name: nosetests
       image: python:3.9-slim
-      workingDir: $(workspaces.source.path)
+      workingDir: $(workspaces.source.path)  # Set the working directory to the shared workspace
       script: |
         #!/bin/bash
         set -e
+        # Install pip and wheel if necessary
         python -m pip install --upgrade pip wheel
+        # Install required packages
         pip install -r requirements.txt
+        # Run nosetests with provided arguments
         nosetests $(params.args)
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: flake8
+spec:
+  workspaces:
+    - name: source  # Workspace for the source code
+  params:
+    - name: args
+      description: Additional arguments for flake8
+      type: string
+      default: ""  # You can provide default flake8 arguments if desired
+  steps:
+    - name: run-flake8
+      image: python:3.9-slim
+      workingDir: $(workspaces.source.path)  # Set the working directory to the shared workspace
+      script: |
+        #!/bin/bash
+        set -e
+        # Install flake8
+        python -m pip install --upgrade pip
+        pip install flake8
+        # Run flake8 with provided arguments
+        flake8 $(params.args)
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: buildah
+spec:
+  workspaces:
+    - name: source  # Workspace for the source code
+  params:
+    - name: image
+      type: string
+      description: The name of the image to build
+      default: "my-image:latest"  # Change this to your desired default image name
+    - name: context
+      type: string
+      description: Build context directory
+      default: "."  # Set the default context to the current directory
+  steps:
+    - name: build-image
+      image: quay.io/buildah/stable
+      script: |
+        #!/bin/bash
+        set -e
+        # Build the image using Buildah
+        buildah bud -t $(params.image) $(params.context)
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: openshift-client
+spec:
+  workspaces:
+    - name: source  # Workspace for your source code
+  params:
+    - name: command
+      type: string
+      description: The command to run with the OpenShift CLI
+      default: "oc version"  # Default command; you can change it
+  steps:
+    - name: run-openshift-client
+      image: registry.access.redhat.com/openshift3/cli
+      script: |
+        #!/bin/sh
+        set -e
+        # Execute the OpenShift CLI command
+        $(params.command)
+
